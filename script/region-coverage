@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+usage() {
+    cat <<EOF 1>&2
+$(basename $0) - compute coverage for each region in a BED file
+
+USAGE: $(basename $0) <regions.bed> <sample.bw>
+
+input: 
+- argument 1: a BED file with regions to query. anything beyond the first 3
+    columns will be ignored.
+- argument 2: a BigWig format containing the pileup of reads. To create this file, 
+    it is required to have your genome in FASTA format, and your *position sorted* 
+    BAM file. Then, run the following commands:
+
+    $ faSize -detailed rn6.fa > rn6.genome
+    $ bedtools genomecov -bg -ibam sample.bam > sample.bg
+    $ bedGraphToBigWig sample.bg rn6.genome sample.bw
+
+    Note that this will consider ALL mapped reads in the BAM file, including
+    duplicates, low quality, etc. If you want to include only some reads,
+    pre-filter your BAM file using "samtools view" with your desired settings.
+
+output format is 5 columns, tab-delimited:
+- column 1,2,3 : chromosome, start, end
+- column 4: percent of bases in the region covered by at least one read
+- column 5: average coverage in the region
+
+dependencies:
+- bedtools
+- Kent utilities (precompiled, static binaries can be downloaded from:
+    https://github.com/ENCODE-DCC/kentUtils)
+
+limitations:
+- query is NOT strand-specific
+
+EOF
+    exit 0
+}
+
+[ "$1" == "-h" ] && usage
+[ "$1" == "--help" ] && usage
+[ $# -ne 2 ] && usage
+
+regions=$(mktemp)
+bw="$2"
+
+trap 'rm -f $regions' EXIT SIGINT SIGTERM
+
+bedtools sort < "$1" \
+    | cut -f1-3 "$1" \
+    | awk 'BEGIN {FS=OFS="\t"} { print $1,$2,$3,NR }' \
+    > $regions
+
+paste <(cut -f1-3 $regions) \
+        <(bigWigAverageOverBed $bw $regions /dev/stdout | cut -f2-) \
+    | awk 'BEGIN {FS=OFS="\t"} { print $1,$2,$3,$5/$4,$7 }'
